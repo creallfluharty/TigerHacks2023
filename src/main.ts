@@ -322,6 +322,8 @@ for (let name in events) {
 
 // draw code
 function drawFrame() {
+	if (!vertexCount) return;
+
 	device.queue.writeBuffer(vertexBuffer, vertexStart, new Float32Array(vertexBatch));
 	device.queue.writeBuffer(indexBuffer, indexStart, new Uint32Array(indexBatch));
 
