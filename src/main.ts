@@ -1,10 +1,5 @@
 import { vec2, mat3 } from "gl-matrix";
 
-// utility functions
-function clamp(x: number, min: number, max: number) {
-	return Math.min(Math.max(x, max), min);
-}
-
 // constants
 const LINE_WIDTH = 5;
 
@@ -40,9 +35,11 @@ let CANVAS_HEIGHT = 0;
 // state
 // - uniforms
 let camera = mat3.create();
+let inverseCamera = mat3.create();
 
 // - mouse
 let mouseFlags = 0;
+let lastMouse: vec2 | null = null;
 
 let leftPreviousPos: vec2 | null = null;
 
@@ -107,17 +104,6 @@ const uniformBuffer = device.createBuffer({
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
-function setCamera() {
-	const uniformArray = new Float32Array([
-		camera[0], camera[1], camera[2], 0,
-		camera[3], camera[4], camera[5], 0,
-		camera[6], camera[7], camera[8], 0,
-		0,         0,         0,         1,
-	]);
-
-	device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
-}
-
 // - layouts
 const vertexBufferLayout: GPUVertexBufferLayout = {
 	arrayStride: 8,
@@ -161,16 +147,36 @@ const bindGroup = device.createBindGroup({
 	}],
 });
 
+// utility functions
+function clamp(x: number, min: number, max: number) {
+	return Math.min(Math.max(x, max), min);
+}
+
+function setCamera() {
+	const uniformArray = new Float32Array([
+		camera[0], camera[1], camera[2], 0,
+		camera[3], camera[4], camera[5], 0,
+		camera[6], camera[7], camera[8], 0,
+		0,         0,         0,         1,
+	]);
+
+	device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
+}
+
+function toView(pos: vec2): vec2 {
+	let newPos = vec2.clone(pos);
+	vec2.transformMat3(newPos, newPos, inverseCamera);
+
+	return newPos;
+}
+
+function toWorld(pos: vec2): vec2 {
+	return vec2.fromValues(pos[0] / CANVAS_WIDTH * 2 - 1, pos[1] / CANVAS_HEIGHT * 2 - 1);
+}
+
 // events
 // - sub event handlers
-function drawMouse(e: MouseEvent) {
-	// get constant variables
-	const canvasRect = canvas.getBoundingClientRect();
-	const canvasPos = vec2.fromValues(canvasRect.left, canvasRect.top);
-
-	// calculate current mouse state
-	let currentPos = vec2.create();
-	currentPos = vec2.sub(currentPos, vec2.fromValues(e.x, e.y), canvasPos);
+function drawMouse(currentPos: vec2) {
 
 	if (!leftPreviousPos) {
 		leftPreviousPos = currentPos;
@@ -207,12 +213,9 @@ function drawMouse(e: MouseEvent) {
 	vec2.scale(l4, orthoDirection, LINE_WIDTH);
 	vec2.add(l4, currentPos, l4);
 
-	let inverseCamera = mat3.clone(camera);
-	mat3.invert(inverseCamera, inverseCamera);
-
 	for (let vertex of [l1, l2, l3, l4]) {
 		let point = vec2.fromValues(vertex[0] / CANVAS_WIDTH * 2 - 1, (CANVAS_HEIGHT - vertex[1]) / CANVAS_HEIGHT * 2 - 1);
-		vec2.transformMat3(point, point, inverseCamera);
+		point = toView(point);
 
 		vertexBatch.push(point[0]);
 		vertexBatch.push(point[1]);
@@ -236,6 +239,9 @@ function panMouse(e: MouseEvent) {
 	vec2.scale(normalized, normalized, 1 / camera[0]);
 
 	mat3.translate(camera, camera, normalized);
+
+	inverseCamera = mat3.create();
+	mat3.invert(inverseCamera, camera);
 }
 
 // - event handlers
@@ -252,26 +258,52 @@ function onMouseUp(e: MouseEvent) {
 }
 
 function onMouseMove(e: MouseEvent) {
+	// get constant variables
+	const canvasRect = canvas.getBoundingClientRect();
+	const canvasPos = vec2.fromValues(canvasRect.left, canvasRect.top);
+
+	// calculate current mouse state
+	let currentPos = vec2.create();
+	currentPos = vec2.sub(currentPos, vec2.fromValues(e.x, e.y), canvasPos);
+
 	if ((mouseFlags & 1) === 1) {
 		if (e.ctrlKey || ((mouseFlags & 4) === 4)) {
 			panMouse(e);
 		} else {
-			drawMouse(e);
+			drawMouse(currentPos);
 		}
 	}
+
+	lastMouse = currentPos;
 }
 
 function onWheel(e: WheelEvent) {
-	if (!e.deltaY) return;
+	if (!e.deltaY || !lastMouse) return;
+
+	let mouseView = vec2.fromValues(lastMouse[0], CANVAS_HEIGHT - lastMouse[1]);
+	mouseView = toView(toWorld(mouseView));
+
+	let cameraPos = vec2.fromValues(camera[2], camera[3 + 2]);
+
+	let mouseOffset = mouseView;
+	vec2.sub(mouseOffset, mouseView, cameraPos);
+
+	mat3.translate(camera, camera, mouseOffset);
 
 	const scale = Math.pow(1.01, Math.sign(e.deltaY) * Math.log(Math.abs(e.deltaY)));
 	mat3.scale(camera, camera, vec2.fromValues(scale, scale));
+
+	vec2.scale(mouseOffset, mouseOffset, -1);
+	mat3.translate(camera, camera, mouseOffset);
 
 	if (camera[0] < MIN_ZOOM || camera[0] > MAX_ZOOM) {
 		camera[0]         = clamp(camera[0], MIN_ZOOM, MAX_ZOOM);
 		camera[3 + 1]     = clamp(camera[0], MIN_ZOOM, MAX_ZOOM);
 		camera[2 * 3 + 2] = clamp(camera[0], MIN_ZOOM, MAX_ZOOM);
 	}
+
+	inverseCamera = mat3.create();
+	mat3.invert(inverseCamera, camera);
 }
 
 const events = {
