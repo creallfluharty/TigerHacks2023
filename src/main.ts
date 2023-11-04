@@ -22,18 +22,22 @@ context.configure({
   format: canvasFormat,
 });
 
-const encoder = device.createCommandEncoder();
-const pass = encoder.beginRenderPass({
-	colorAttachments: [{
-		view: context.getCurrentTexture().createView(),
-		loadOp: "clear",
-		clearValue: [0, 0.5, 0.7, 1],
-		storeOp: "store",
-	}]
-});
+function drawFrame() {
+	const encoder = device.createCommandEncoder();
+	const pass = encoder.beginRenderPass({
+		colorAttachments: [{
+			view: context.getCurrentTexture().createView(),
+			loadOp: "clear",
+			clearValue: [0, 0.5, 0.7, 1],
+			storeOp: "store",
+		}]
+	});
 
-pass.end()
+	pass.end()
 
-device.queue.submit([encoder.finish()]);
+	device.queue.submit([encoder.finish()]);
+}
+
+drawFrame();
 
 export {};
