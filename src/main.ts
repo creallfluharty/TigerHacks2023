@@ -163,15 +163,15 @@ function setCamera() {
 	device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
 }
 
+function toWorld(pos: vec2): vec2 {
+	return vec2.fromValues(pos[0] / CANVAS_WIDTH * 2 - 1, pos[1] / CANVAS_HEIGHT * 2 - 1);
+}
+
 function toView(pos: vec2): vec2 {
 	let newPos = vec2.clone(pos);
 	vec2.transformMat3(newPos, newPos, inverseCamera);
 
 	return newPos;
-}
-
-function toWorld(pos: vec2): vec2 {
-	return vec2.fromValues(pos[0] / CANVAS_WIDTH * 2 - 1, pos[1] / CANVAS_HEIGHT * 2 - 1);
 }
 
 // events
@@ -214,7 +214,7 @@ function drawMouse(currentPos: vec2) {
 	vec2.add(l4, currentPos, l4);
 
 	for (let vertex of [l1, l2, l3, l4]) {
-		let point = vec2.fromValues(vertex[0] / CANVAS_WIDTH * 2 - 1, (CANVAS_HEIGHT - vertex[1]) / CANVAS_HEIGHT * 2 - 1);
+		let point = toWorld(vec2.fromValues(vertex[0], CANVAS_HEIGHT - vertex[1]))
 		point = toView(point);
 
 		vertexBatch.push(point[0]);
@@ -235,7 +235,8 @@ function drawMouse(currentPos: vec2) {
 function panMouse(e: MouseEvent) {
 	let delta = vec2.fromValues(e.movementX, -e.movementY);
 
-	let normalized = vec2.fromValues(delta[0] / CANVAS_WIDTH * 2, delta[1] / CANVAS_HEIGHT * 2);
+	let normalized = toWorld(delta);
+	vec2.add(normalized, normalized, vec2.fromValues(1, 1));
 	vec2.scale(normalized, normalized, 1 / camera[0]);
 
 	mat3.translate(camera, camera, normalized);
