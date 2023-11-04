@@ -1,13 +1,47 @@
-import { vec2 } from "gl-matrix";
+import { vec2, mat3, mat4 } from "gl-matrix";
 
 // constants
 const LINE_WIDTH = 5;
+
+const SHADER_SOURCE = `
+@group(0) @binding(0) var<uniform> grid: mat3x3f;
+
+struct VertexOutput {
+	@builtin(position) pos: vec4f
+}
+
+@vertex
+fn vertexMain(@location(0) pos: vec2f) -> VertexOutput {
+	let world = (grid * vec3f(pos, 1)).xy;
+
+	var output: VertexOutput;
+	output.pos = vec4f(world, 0, 1);
+	return output;
+}
+
+@fragment
+fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
+	return vec4f(1, 0, 0, 1);
+}
+`
 
 // pseudo-constants
 let CANVAS_WIDTH = 0;
 let CANVAS_HEIGHT = 0;
 
-// geometry
+// state
+// - uniforms
+let camera = mat3.create();
+
+// - mouse
+let mouseFlags = 0;
+
+let leftPreviousPos: vec2 | null = null;
+
+let previousL1: vec2 | null = null;
+let previousL2: vec2 | null = null;
+
+// - geometry
 let vertexCount = 0;
 
 let vertexBatch: number[] = [];
@@ -59,6 +93,23 @@ const indexBuffer = device.createBuffer({
 
 device.queue.writeBuffer(indexBuffer, 0, new Uint32Array(1_000_000 / 4));
 
+const uniformBuffer = device.createBuffer({
+  label: "Grid Uniforms",
+  size: 16 * 4,
+  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+});
+
+function setCamera() {
+	const uniformArray = new Float32Array([
+		camera[0], camera[1], camera[2], 0,
+		camera[3], camera[4], camera[5], 0,
+		camera[6], camera[7], camera[8], 0,
+		0,         0,         0,         1,
+	]);
+
+	device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
+}
+
 // - layouts
 const vertexBufferLayout: GPUVertexBufferLayout = {
 	arrayStride: 8,
@@ -72,17 +123,7 @@ const vertexBufferLayout: GPUVertexBufferLayout = {
 // - shaders
 const cellShaderModule = device.createShaderModule({
 	label: "Program shader",
-	code: `
-		@vertex
-		fn vertexMain(@location(0) pos: vec2f) -> @builtin(position) vec4f {
-			return vec4f(pos, 0, 1);
-		}
-
-		@fragment
-		fn fragmentMain() -> @location(0) vec4f {
-			return vec4f(1, 0, 0, 1); // (Red, Green, Blue, Alpha)
-		}
-	`
+	code: SHADER_SOURCE,
 });
 
 // - pipeline
@@ -103,30 +144,18 @@ const cellPipeline = device.createRenderPipeline({
   }
 });
 
+const bindGroup = device.createBindGroup({
+	label: "Cell renderer bind group",
+	layout: cellPipeline.getBindGroupLayout(0),
+	entries: [{
+		binding: 0,
+		resource: { buffer: uniformBuffer }
+	}],
+});
+
 // events
-// - event state
-let leftMouseDown = false;
-let previousPos: vec2 | null = null;
-
-let previousL1: vec2 | null = null;
-let previousL2: vec2 | null = null;
-
-// - event handlers
-function onMouseDown(e: MouseEvent) {
-	leftMouseDown = (e.buttons & 1) === 1;
-}
-
-function onMouseUp(e: MouseEvent) {
-	leftMouseDown = (e.buttons & 1) === 1;
-
-	previousPos = null;
-	previousL1 = null;
-	previousL2 = null;
-}
-
-function onMouseMove(e: MouseEvent) {
-	if (!leftMouseDown) return;
-
+// - sub event handlers
+function drawMouse(e: MouseEvent) {
 	// get constant variables
 	const canvasRect = canvas.getBoundingClientRect();
 	const canvasPos = vec2.fromValues(canvasRect.left, canvasRect.top);
@@ -135,14 +164,14 @@ function onMouseMove(e: MouseEvent) {
 	let currentPos = vec2.create();
 	currentPos = vec2.sub(currentPos, vec2.fromValues(e.x, e.y), canvasPos);
 
-	if (!previousPos) {
-		previousPos = currentPos;
+	if (!leftPreviousPos) {
+		leftPreviousPos = currentPos;
 		return;
 	}
 
 	// calculate line variables
 	let direction = vec2.create();
-	direction = vec2.sub(direction, currentPos, previousPos);
+	direction = vec2.sub(direction, currentPos, leftPreviousPos);
 
 	let orthoDirection = vec2.fromValues(-direction[1], direction[0]);
 	orthoDirection = vec2.normalize(orthoDirection, orthoDirection);
@@ -155,10 +184,10 @@ function onMouseMove(e: MouseEvent) {
 		l2 = previousL2;
 	} else {
 		l1 = vec2.mul(l1, orthoDirection, vec2.fromValues(-LINE_WIDTH, -LINE_WIDTH));
-		l1 = vec2.add(l1, previousPos, l1);
+		l1 = vec2.add(l1, leftPreviousPos, l1);
 
 		l2 = vec2.mul(l2, orthoDirection, vec2.fromValues(LINE_WIDTH, LINE_WIDTH));
-		l2 = vec2.add(l2, previousPos, l2);
+		l2 = vec2.add(l2, leftPreviousPos, l2);
 	}
 
 	let l3 = vec2.create();
@@ -183,7 +212,37 @@ function onMouseMove(e: MouseEvent) {
 	}
 
 	vertexCount += 4;
-	previousPos = currentPos;
+	leftPreviousPos = currentPos;
+}
+
+function panMouse(e: MouseEvent) {
+	let delta = vec2.fromValues(e.movementX, -e.movementY);
+	let normalized = vec2.fromValues(delta[0] / CANVAS_WIDTH * 2, delta[1] / CANVAS_HEIGHT * 2);
+
+	mat3.translate(camera, camera, normalized);
+}
+
+// - event handlers
+function onMouseDown(e: MouseEvent) {
+	mouseFlags = e.buttons;
+}
+
+function onMouseUp(e: MouseEvent) {
+	mouseFlags = e.buttons;
+
+	leftPreviousPos = null;
+	previousL1 = null;
+	previousL2 = null;
+}
+
+function onMouseMove(e: MouseEvent) {
+	if ((mouseFlags & 1) === 1) {
+		if (e.ctrlKey || ((mouseFlags & 4) === 4)) {
+			panMouse(e);
+		} else {
+			drawMouse(e);
+		}
+	}
 }
 
 const events = {
@@ -204,6 +263,8 @@ function drawFrame() {
 	device.queue.writeBuffer(vertexBuffer, vertexStart, new Float32Array(vertexBatch));
 	device.queue.writeBuffer(indexBuffer, indexStart, new Uint32Array(indexBatch));
 
+	setCamera();
+
 	vertexStart += vertexBatch.length * 4;
 	indexStart += indexBatch.length * 4;
 
@@ -221,8 +282,12 @@ function drawFrame() {
 	});
 
 	pass.setPipeline(cellPipeline);
+
 	pass.setVertexBuffer(0, vertexBuffer);
 	pass.setIndexBuffer(indexBuffer, "uint32");
+
+	pass.setBindGroup(0, bindGroup); // New line!
+
 	pass.drawIndexed(vertexCount / 4 * 6);
 
 	pass.end()
