@@ -183,21 +183,21 @@ function drawMouse(e: MouseEvent) {
 		l1 = previousL1;
 		l2 = previousL2;
 	} else {
-		l1 = vec2.mul(l1, orthoDirection, vec2.fromValues(-LINE_WIDTH, -LINE_WIDTH));
-		l1 = vec2.add(l1, leftPreviousPos, l1);
+		vec2.scale(l1, orthoDirection, -LINE_WIDTH);
+		vec2.add(l1, leftPreviousPos, l1);
 
-		l2 = vec2.mul(l2, orthoDirection, vec2.fromValues(LINE_WIDTH, LINE_WIDTH));
-		l2 = vec2.add(l2, leftPreviousPos, l2);
+		vec2.scale(l2, orthoDirection, LINE_WIDTH);
+		vec2.add(l2, leftPreviousPos, l2);
 	}
 
 	let l3 = vec2.create();
 	let l4 = vec2.create();
 
-	l3 = vec2.mul(l3, orthoDirection, vec2.fromValues(-LINE_WIDTH, -LINE_WIDTH));
-	l3 = vec2.add(l3, currentPos, l3);
+	vec2.scale(l3, orthoDirection, -LINE_WIDTH);
+	vec2.add(l3, currentPos, l3);
 
-	l4 = vec2.mul(l4, orthoDirection, vec2.fromValues(LINE_WIDTH, LINE_WIDTH));
-	l4 = vec2.add(l4, currentPos, l4);
+	vec2.scale(l4, orthoDirection, LINE_WIDTH);
+	vec2.add(l4, currentPos, l4);
 
 	for (let vertex of [l1, l2, l3, l4]) {
 		vertexBatch.push(vertex[0] / CANVAS_WIDTH * 2 - 1);
