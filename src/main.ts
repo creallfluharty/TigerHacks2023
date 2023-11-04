@@ -322,8 +322,6 @@ for (let name in events) {
 
 // draw code
 function drawFrame() {
-	if (!vertexCount) return;
-
 	device.queue.writeBuffer(vertexBuffer, vertexStart, new Float32Array(vertexBatch));
 	device.queue.writeBuffer(indexBuffer, indexStart, new Uint32Array(indexBatch));
 
@@ -352,7 +350,7 @@ function drawFrame() {
 
 	pass.setBindGroup(0, bindGroup); // New line!
 
-	pass.drawIndexed(vertexCount / 4 * 6);
+	if (vertexCount) pass.drawIndexed(vertexCount / 4 * 6);
 
 	pass.end()
 
