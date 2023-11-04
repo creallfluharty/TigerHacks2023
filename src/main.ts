@@ -1,4 +1,5 @@
 import { vec2, mat3 } from "gl-matrix";
+import { Renderer } from "./renderer.ts";
 
 // constants
 const LINE_WIDTH = 5;
@@ -6,11 +7,11 @@ const LINE_WIDTH = 5;
 const MIN_ZOOM = Math.pow(10, -5);
 const MAX_ZOOM = Math.pow(10, 5);
 
-const SHADER_SOURCE = `
+const LINE_SHADER_SOURCE = `
 @group(0) @binding(0) var<uniform> camera: mat3x3f;
 
 struct VertexOutput {
-	@builtin(position) pos: vec4f
+	@builtin(position) pos: vec4f,
 }
 
 @vertex
@@ -28,6 +29,37 @@ fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
 }
 `
 
+const TEXTURE_SHADER_SOURCE = `
+@group(0) @binding(0) var<uniform> camera: mat3x3f;
+@group(0) @binding(1) var active_sampler: sampler;
+@group(0) @binding(2) var texture: texture_2d<f32>;
+
+struct VertexIn {
+	@location(0) pos: vec2f,
+	@location(1) tex_coords: vec2f,
+}
+
+struct VertexOut {
+	@builtin(position) pos: vec4f,
+	@location(0) tex_coords: vec2f,
+}
+
+@vertex
+fn vertexMain(in: VertexIn) -> VertexOut {
+	let world = (camera * vec3f(in.pos, 1)).xy;
+
+	var output: VertexOut;
+	output.pos = vec4f(world, 0, 1);
+	output.tex_coords = in.tex_coords;
+	return output;
+}
+
+@fragment
+fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
+	return textureSample(texture, active_sampler, in.tex_coords);
+}
+`
+
 // pseudo-constants
 let CANVAS_WIDTH = 0;
 let CANVAS_HEIGHT = 0;
@@ -39,23 +71,13 @@ let inverseCamera = mat3.create();
 
 // - mouse
 let mouseFlags = 0;
-let lastMouse: vec2 | null = null;
+let lastMouse = vec2.fromValues(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
 
 let leftPreviousPos: vec2 | null = null;
 
 let previousL1: vec2 | null = null;
 let previousL2: vec2 | null = null;
 
-// - geometry
-let vertexCount = 0;
-
-let vertexBatch: number[] = [];
-let indexBatch: number[] = [];
-
-let vertexStart = 0;
-let indexStart = 0;
-
-// - webgpu objects
 // webgpu setup
 const canvas = document.querySelector("canvas")!;
 
@@ -81,94 +103,63 @@ CANVAS_HEIGHT = window.innerHeight - 20;
 canvas.width = CANVAS_WIDTH;
 canvas.height = CANVAS_HEIGHT;
 
-// webgpu object setup
-// - buffers
-const vertexBuffer = device.createBuffer({
-	label: "Program vertices",
-	size: 1_000_000,
-	usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-});
-
-device.queue.writeBuffer(vertexBuffer, 0, new Float32Array(1_000_000 / 4));
-
-const indexBuffer = device.createBuffer({
-	label: "Program indices",
-	size: 1_000_000,
-	usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
-});
-
-device.queue.writeBuffer(indexBuffer, 0, new Uint32Array(1_000_000 / 4));
-
+// renderer setup
 const uniformBuffer = device.createBuffer({
-  label: "Grid Uniforms",
+  label: "Program uniforms",
   size: 16 * 4,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
-// - layouts
-const vertexBufferLayout: GPUVertexBufferLayout = {
-	arrayStride: 8,
-	attributes: [{
-		format: "float32x2",
-		offset: 0,
-		shaderLocation: 0, // pos
+let lineRenderer = new Renderer({
+	context,
+	device,
+	canvasFormat,
+	source: LINE_SHADER_SOURCE,
+	uniformBuffer,
+	layout: {
+		arrayStride: 8,
+		attributes: [{
+			format: "float32x2",
+			offset: 0,
+			shaderLocation: 0, // pos
+		}],
+	},
+	clearColor: [0, 0.5, 0.7, 1]
+});
+
+lineRenderer.addGroup(device.createBindGroup({
+	layout: lineRenderer.pipeline.getBindGroupLayout(0),
+	entries: [{
+		binding: 0,
+		resource: { buffer: uniformBuffer }
 	}],
-};
+}));
 
-// - shaders
-const cellShaderModule = device.createShaderModule({
-	label: "Program shader",
-	code: SHADER_SOURCE,
-});
-
-// - pipeline
-const cellPipeline = device.createRenderPipeline({
-  label: "Cell pipeline",
-  layout: "auto",
-  vertex: {
-    module: cellShaderModule,
-    entryPoint: "vertexMain",
-    buffers: [vertexBufferLayout]
-  },
-  fragment: {
-    module: cellShaderModule,
-    entryPoint: "fragmentMain",
-    targets: [{
-      format: canvasFormat
-    }]
-  }
-});
-
-// - bind groups
-let bindGroup = device.createBindGroup({
-	label: "Cell renderer bind group",
-	layout: cellPipeline.getBindGroupLayout(0),
-	entries: [
-		{ binding: 0, resource: { buffer: uniformBuffer } },
-	],
+let textureRenderer = new Renderer({
+	context,
+	device,
+	canvasFormat,
+	source: TEXTURE_SHADER_SOURCE,
+	uniformBuffer,
+	layout: {
+		arrayStride: 16,
+		attributes: [
+			{
+				format: "float32x2",
+				offset: 0,
+				shaderLocation: 0,
+			},
+			{
+				format: "float32x2",
+				offset: 8,
+				shaderLocation: 1,
+			}
+		]
+	},
+	clearColor: null,
 });
 
 // utility functions
-function clamp(x: number, min: number, max: number) {
-	return Math.max(Math.min(x, max), min);
-}
-
-function stringifyMatrix(matrix: any, n: number, m: number): String {
-	let result = "[";
-
-	for (let y = 0; y < m; y++) {
-		for (let x = 0; x < n; x++) {
-			result += matrix[y * m + x].toFixed(5);
-			if (x < n - 1) result += ", ";
-		}
-
-		result += "]"
-		if (y < m - 1) result += "\n"
-	}
-
-	return result;
-}
-
 function setCamera() {
 	const uniformArray = new Float32Array([
 		camera[0], camera[1], camera[2], 0,
@@ -233,18 +224,19 @@ function drawMouse(currentPos: vec2) {
 		let point = toWorld(vec2.fromValues(vertex[0], CANVAS_HEIGHT - vertex[1]))
 		point = toView(point);
 
-		vertexBatch.push(point[0]);
-		vertexBatch.push(point[1]);
+		lineRenderer.batches[0].vertices.push(point[0]);
+		lineRenderer.batches[0].vertices.push(point[1]);
 	}
 
 	previousL1 = l3;
 	previousL2 = l4;
 
 	for (let rawIndex of [0, 1, 2, 1, 2, 3]) {
-		indexBatch.push(rawIndex + vertexCount);
+		lineRenderer.batches[0].indices.push(rawIndex + lineRenderer.batches[0].vcount);
 	}
 
-	vertexCount += 4;
+	lineRenderer.batches[0].vcount += 4;
+	lineRenderer.batches[0].icount += 6;
 	leftPreviousPos = currentPos;
 }
 
@@ -351,8 +343,6 @@ for (let name in events) {
 
 // non-canvas events
 function onKey(e: KeyboardEvent) {
-	console.log(`on key event: ${e}`);
-
 	if (e.key == "o") {
 		// trigger input tag to get image
 		let input = document.getElementById("fakeinput")!;
@@ -374,55 +364,67 @@ async function onInputChange() {
 			height: image.height,
 		},
 		format: "rgba8unorm",
-		usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+		usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
 	};
+
+	// texture resources
+	const sampler = device.createSampler();
 
 	const texture = device.createTexture(textureDescriptor);
 	device.queue.copyExternalImageToTexture({ source: image }, { texture }, textureDescriptor.size);
 
-	//TODO draw texture
+	// bind group
+	const bindGroup = device.createBindGroup({
+		layout: textureRenderer.pipeline.getBindGroupLayout(0),
+		entries: [
+			{ binding: 0, resource: { buffer: uniformBuffer } },
+			{ binding: 1, resource: sampler },
+			{ binding: 2, resource: texture.createView() },
+		]
+	});
+
+	textureRenderer.addGroup(bindGroup);
+	let batchIndex = textureRenderer.batches.length - 1;
+
+	// geometry
+	let vertices = [
+		lastMouse[0],               lastMouse[1],                0, 0,
+		lastMouse[0] + image.width, lastMouse[1],                1, 0,
+		lastMouse[0],               lastMouse[1] + image.height, 0, 1,
+		lastMouse[0] + image.width, lastMouse[1] + image.height, 1, 1,
+	]
+
+	for (let i = 0; i < vertices.length; i += 2) {
+		let point = vec2.fromValues(vertices[i], vertices[i + 1]);
+
+		// not a texture coordinate
+		if ((i - 2) % 4) {
+			point = toWorld(vec2.fromValues(point[0], CANVAS_HEIGHT - point[1]))
+			point = toView(point);
+		}
+
+		textureRenderer.batches[batchIndex].vertices.push(point[0]);
+		textureRenderer.batches[batchIndex].vertices.push(point[1]);
+	}
+
+	for (let index of [0, 1, 2, 1, 2, 3]) {
+		textureRenderer.batches[batchIndex].indices.push(textureRenderer.batches[batchIndex].vcount + index);
+	}
+
+	textureRenderer.batches[batchIndex].vcount += 4;
+	textureRenderer.batches[batchIndex].icount += 6;
 }
 
 document.addEventListener("keydown", onKey);
 document.getElementById("fakeinput")!.addEventListener("change", onInputChange);
 
-// draw code
-function drawFrame() {
-	device.queue.writeBuffer(vertexBuffer, vertexStart, new Float32Array(vertexBatch));
-	device.queue.writeBuffer(indexBuffer, indexStart, new Uint32Array(indexBatch));
-
+function frame() {
 	setCamera();
 
-	vertexStart += vertexBatch.length * 4;
-	indexStart += indexBatch.length * 4;
-
-	vertexBatch = [];
-	indexBatch = [];
-
-	const encoder = device.createCommandEncoder();
-	const pass = encoder.beginRenderPass({
-		colorAttachments: [{
-			view: context.getCurrentTexture().createView(),
-			loadOp: "clear",
-			clearValue: [0, 0.5, 0.7, 1],
-			storeOp: "store",
-		}]
-	});
-
-	pass.setPipeline(cellPipeline);
-
-	pass.setVertexBuffer(0, vertexBuffer);
-	pass.setIndexBuffer(indexBuffer, "uint32");
-
-	pass.setBindGroup(0, bindGroup);
-
-	if (vertexCount) pass.drawIndexed(vertexCount / 4 * 6);
-
-	pass.end()
-
-	device.queue.submit([encoder.finish()]);
+	lineRenderer.render();
+	textureRenderer.render();
 }
 
-setInterval(drawFrame, 100);
+setInterval(frame, 100);
 
 export {};
