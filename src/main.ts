@@ -1,10 +1,10 @@
-import { vec2, mat3, mat4 } from "gl-matrix";
+import { vec2, mat3 } from "gl-matrix";
 
 // constants
 const LINE_WIDTH = 5;
 
 const SHADER_SOURCE = `
-@group(0) @binding(0) var<uniform> grid: mat3x3f;
+@group(0) @binding(0) var<uniform> camera: mat3x3f;
 
 struct VertexOutput {
 	@builtin(position) pos: vec4f
@@ -12,7 +12,7 @@ struct VertexOutput {
 
 @vertex
 fn vertexMain(@location(0) pos: vec2f) -> VertexOutput {
-	let world = (grid * vec3f(pos, 1)).xy;
+	let world = (camera * vec3f(pos, 1)).xy;
 
 	var output: VertexOutput;
 	output.pos = vec4f(world, 0, 1);
