@@ -112,9 +112,16 @@ let previousL1: vec2 | null = null;
 let previousL2: vec2 | null = null;
 
 // - event handlers
-function setLeftMouse(e: MouseEvent) {
-	const flags = e.buttons !== undefined ? e.buttons : e.which;
-	leftMouseDown = (flags & 1) === 1;
+function onMouseDown(e: MouseEvent) {
+	leftMouseDown = (e.buttons & 1) === 1;
+}
+
+function onMouseUp(e: MouseEvent) {
+	leftMouseDown = (e.buttons & 1) === 1;
+
+	previousPos = null;
+	previousL1 = null;
+	previousL2 = null;
 }
 
 function onMouseMove(e: MouseEvent) {
@@ -180,8 +187,8 @@ function onMouseMove(e: MouseEvent) {
 }
 
 const events = {
-	"mouseup":   setLeftMouse,
-	"mousedown": setLeftMouse,
+	"mouseup":   onMouseUp,
+	"mousedown": onMouseDown,
 	"mousemove": onMouseMove,
 };
 
