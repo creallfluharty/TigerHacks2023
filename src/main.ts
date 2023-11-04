@@ -55,6 +55,7 @@ let indexBatch: number[] = [];
 let vertexStart = 0;
 let indexStart = 0;
 
+// - webgpu objects
 // webgpu setup
 const canvas = document.querySelector("canvas")!;
 
@@ -138,13 +139,13 @@ const cellPipeline = device.createRenderPipeline({
   }
 });
 
-const bindGroup = device.createBindGroup({
+// - bind groups
+let bindGroup = device.createBindGroup({
 	label: "Cell renderer bind group",
 	layout: cellPipeline.getBindGroupLayout(0),
-	entries: [{
-		binding: 0,
-		resource: { buffer: uniformBuffer }
-	}],
+	entries: [
+		{ binding: 0, resource: { buffer: uniformBuffer } },
+	],
 });
 
 // utility functions
@@ -193,7 +194,6 @@ function toView(pos: vec2): vec2 {
 // events
 // - sub event handlers
 function drawMouse(currentPos: vec2) {
-
 	if (!leftPreviousPos) {
 		leftPreviousPos = currentPos;
 		return;
@@ -349,6 +349,43 @@ for (let name in events) {
     }
 }
 
+// non-canvas events
+function onKey(e: KeyboardEvent) {
+	console.log(`on key event: ${e}`);
+
+	if (e.key == "o") {
+		// trigger input tag to get image
+		let input = document.getElementById("fakeinput")!;
+		input.dispatchEvent(new PointerEvent("click"));
+	}
+}
+
+async function onInputChange() {
+	let input = (document.getElementById("fakeinput") as HTMLInputElement)!;
+	let file = input.files?.item(0);
+
+	if (!file) throw new Error("Image input cancelled!");
+
+	let image = await createImageBitmap(file);
+
+	const textureDescriptor: GPUTextureDescriptor = {
+		size: {
+			width: image.width,
+			height: image.height,
+		},
+		format: "rgba8unorm",
+		usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+	};
+
+	const texture = device.createTexture(textureDescriptor);
+	device.queue.copyExternalImageToTexture({ source: image }, { texture }, textureDescriptor.size);
+
+	//TODO draw texture
+}
+
+document.addEventListener("keydown", onKey);
+document.getElementById("fakeinput")!.addEventListener("change", onInputChange);
+
 // draw code
 function drawFrame() {
 	device.queue.writeBuffer(vertexBuffer, vertexStart, new Float32Array(vertexBatch));
@@ -377,7 +414,7 @@ function drawFrame() {
 	pass.setVertexBuffer(0, vertexBuffer);
 	pass.setIndexBuffer(indexBuffer, "uint32");
 
-	pass.setBindGroup(0, bindGroup); // New line!
+	pass.setBindGroup(0, bindGroup);
 
 	if (vertexCount) pass.drawIndexed(vertexCount / 4 * 6);
 
