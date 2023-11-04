@@ -149,7 +149,23 @@ const bindGroup = device.createBindGroup({
 
 // utility functions
 function clamp(x: number, min: number, max: number) {
-	return Math.min(Math.max(x, max), min);
+	return Math.max(Math.min(x, max), min);
+}
+
+function stringifyMatrix(matrix: any, n: number, m: number): String {
+	let result = "[";
+
+	for (let y = 0; y < m; y++) {
+		for (let x = 0; x < n; x++) {
+			result += matrix[y * m + x].toFixed(5);
+			if (x < n - 1) result += ", ";
+		}
+
+		result += "]"
+		if (y < m - 1) result += "\n"
+	}
+
+	return result;
 }
 
 function setCamera() {
@@ -296,11 +312,23 @@ function onWheel(e: WheelEvent) {
 
 	vec2.scale(mouseOffset, mouseOffset, -1);
 	mat3.translate(camera, camera, mouseOffset);
+	
+	let factor = 1;
 
-	if (camera[0] < MIN_ZOOM || camera[0] > MAX_ZOOM) {
-		camera[0]         = clamp(camera[0], MIN_ZOOM, MAX_ZOOM);
-		camera[3 + 1]     = clamp(camera[0], MIN_ZOOM, MAX_ZOOM);
-		camera[2 * 3 + 2] = clamp(camera[0], MIN_ZOOM, MAX_ZOOM);
+	if (camera[0] < MIN_ZOOM) {
+		factor = MIN_ZOOM / camera[0];
+	} else if (camera[0] > MAX_ZOOM) {
+		factor = MAX_ZOOM / camera[0];
+	}
+
+	if (factor != 1) {
+		vec2.scale(mouseOffset, mouseOffset, -1);
+		mat3.translate(camera, camera, mouseOffset);
+
+		mat3.scale(camera, camera, vec2.fromValues(factor, factor));
+
+		vec2.scale(mouseOffset, mouseOffset, -1);
+		mat3.translate(camera, camera, mouseOffset);
 	}
 
 	inverseCamera = mat3.create();
