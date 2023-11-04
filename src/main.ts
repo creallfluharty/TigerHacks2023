@@ -1,7 +1,15 @@
 import { vec2, mat3 } from "gl-matrix";
 
+// utility functions
+function clamp(x: number, min: number, max: number) {
+	return Math.min(Math.max(x, max), min);
+}
+
 // constants
 const LINE_WIDTH = 5;
+
+const MIN_ZOOM = Math.pow(10, -5);
+const MAX_ZOOM = Math.pow(10, 5);
 
 const SHADER_SOURCE = `
 @group(0) @binding(0) var<uniform> camera: mat3x3f;
@@ -199,9 +207,15 @@ function drawMouse(e: MouseEvent) {
 	vec2.scale(l4, orthoDirection, LINE_WIDTH);
 	vec2.add(l4, currentPos, l4);
 
+	let inverseCamera = mat3.clone(camera);
+	mat3.invert(inverseCamera, inverseCamera);
+
 	for (let vertex of [l1, l2, l3, l4]) {
-		vertexBatch.push(vertex[0] / CANVAS_WIDTH * 2 - 1);
-		vertexBatch.push((CANVAS_HEIGHT - vertex[1]) / CANVAS_HEIGHT * 2 - 1);
+		let point = vec2.fromValues(vertex[0] / CANVAS_WIDTH * 2 - 1, (CANVAS_HEIGHT - vertex[1]) / CANVAS_HEIGHT * 2 - 1);
+		vec2.transformMat3(point, point, inverseCamera);
+
+		vertexBatch.push(point[0]);
+		vertexBatch.push(point[1]);
 	}
 
 	previousL1 = l3;
@@ -217,7 +231,9 @@ function drawMouse(e: MouseEvent) {
 
 function panMouse(e: MouseEvent) {
 	let delta = vec2.fromValues(e.movementX, -e.movementY);
+
 	let normalized = vec2.fromValues(delta[0] / CANVAS_WIDTH * 2, delta[1] / CANVAS_HEIGHT * 2);
+	vec2.scale(normalized, normalized, 1 / camera[0]);
 
 	mat3.translate(camera, camera, normalized);
 }
@@ -245,10 +261,24 @@ function onMouseMove(e: MouseEvent) {
 	}
 }
 
+function onWheel(e: WheelEvent) {
+	if (!e.deltaY) return;
+
+	const scale = Math.pow(1.01, Math.sign(e.deltaY) * Math.log(Math.abs(e.deltaY)));
+	mat3.scale(camera, camera, vec2.fromValues(scale, scale));
+
+	if (camera[0] < MIN_ZOOM || camera[0] > MAX_ZOOM) {
+		camera[0]         = clamp(camera[0], MIN_ZOOM, MAX_ZOOM);
+		camera[3 + 1]     = clamp(camera[0], MIN_ZOOM, MAX_ZOOM);
+		camera[2 * 3 + 2] = clamp(camera[0], MIN_ZOOM, MAX_ZOOM);
+	}
+}
+
 const events = {
 	"mouseup":   onMouseUp,
 	"mousedown": onMouseDown,
 	"mousemove": onMouseMove,
+	"wheel":     onWheel,
 };
 
 for (let name in events) {
